@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use uuid::Uuid;
 use std::sync::{Arc, Mutex}; // Added missing import
-use rusqlite::{Connection, params_from_iter, Statement};
+use rusqlite::{Connection}; // Removed params_from_iter, Statement
 use log;
 
 // Refactored load command
@@ -87,9 +87,12 @@ pub(crate) fn close( // Removed async as no async ops needed now
 
     for alias in aliases_to_remove {
         connection_map.remove(&alias);
-        // Connection associated with the Arc<Mutex<_>> will be closed when Arc count drops to 0.
-        // TODO: Check TransactionManager and cleanup related transactions?
-        // If a transaction holds an Arc clone, the connection won't close until TX finishes.
+        // Remove the alias from the connection manager.
+        // Note: This does not affect active transactions associated with this alias.
+        // Active transactions hold their own connection Arc and will continue until
+        // commit or rollback. The connection is closed when the Arc count drops to 0.
+        // Attempting to start *new* operations (load, execute, select, begin_transaction)
+        // with this alias will fail until it is loaded again.
     }
 
     Ok(true)

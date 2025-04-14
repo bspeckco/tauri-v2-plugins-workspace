@@ -569,5 +569,109 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_close_command() {
+        let (app_handle, _, _) = setup_test_environment();
+        let temp_db_dir = tempdir().expect("Failed to create temp dir for close test");
+        let db_path = temp_db_dir.path().join("test_close.sqlite");
+        let db_alias = format!("sqlite:{}", db_path.display());
+
+        // 1. Load the database
+        let load_result = commands::load(
+            app_handle.clone(),
+            app_handle.state::<ConnectionManager>(),
+            db_alias.clone(),
+        );
+        assert!(load_result.is_ok(), "Load failed: {:?}", load_result.err());
+        assert_eq!(load_result.unwrap(), db_alias);
+
+        // Verify it's in the manager
+        {
+            let connection_manager = app_handle.state::<ConnectionManager>();
+            let conn_map = connection_manager.0.lock().unwrap();
+            assert!(conn_map.contains_key(&db_alias), "DB alias should be loaded");
+        }
+
+        // 2. Close the specific database alias
+        let close_result = commands::close(
+            app_handle.state::<ConnectionManager>(),
+            Some(db_alias.clone())
+        );
+        assert!(close_result.is_ok(), "Close failed: {:?}", close_result.err());
+        assert!(close_result.unwrap(), "Close should return true for known alias");
+
+        // Verify it's removed from the manager
+        {
+            let connection_manager = app_handle.state::<ConnectionManager>();
+            let conn_map = connection_manager.0.lock().unwrap();
+            assert!(!conn_map.contains_key(&db_alias), "DB alias should be removed after close");
+        }
+
+        // 3. Attempt to execute a command using the closed alias (should fail)
+        let execute_sql = "SELECT 1".to_string();
+        let execute_result = commands::execute(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone(),
+            execute_sql,
+            vec![],
+            None, // Non-transactional
+        );
+        assert!(execute_result.is_err(), "Execute should fail after close");
+        match execute_result.err().unwrap() {
+            Error::DatabaseNotLoaded(alias) => assert_eq!(alias, db_alias),
+            e => panic!("Expected DatabaseNotLoaded error, got {:?}", e),
+        }
+
+        // 4. Attempt to begin a transaction using the closed alias (should fail)
+         let begin_tx_result = commands::begin_transaction(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone(),
+        );
+        assert!(begin_tx_result.is_err(), "Begin transaction should fail after close");
+         match begin_tx_result.err().unwrap() {
+            Error::DatabaseNotLoaded(alias) => assert_eq!(alias, db_alias),
+            e => panic!("Expected DatabaseNotLoaded error, got {:?}", e),
+        }
+
+        // 5. Test closing an unknown alias (should fail)
+        let close_unknown_result = commands::close(
+            app_handle.state::<ConnectionManager>(),
+            Some("sqlite:nonexistent.db".to_string())
+        );
+        assert!(close_unknown_result.is_err(), "Closing unknown alias should fail");
+         match close_unknown_result.err().unwrap() {
+            Error::DatabaseNotLoaded(alias) => assert_eq!(alias, "sqlite:nonexistent.db"),
+            e => panic!("Expected DatabaseNotLoaded error, got {:?}", e),
+        }
+
+        // 6. Load two databases, close all, verify both are gone
+        let db_alias_1 = format!("sqlite:{}", temp_db_dir.path().join("test_close_all_1.sqlite").display());
+        let db_alias_2 = format!("sqlite:{}", temp_db_dir.path().join("test_close_all_2.sqlite").display());
+        commands::load(app_handle.clone(), app_handle.state::<ConnectionManager>(), db_alias_1.clone()).expect("Load 1 failed");
+        commands::load(app_handle.clone(), app_handle.state::<ConnectionManager>(), db_alias_2.clone()).expect("Load 2 failed");
+
+        { // Verify both loaded
+             let connection_manager = app_handle.state::<ConnectionManager>();
+            let conn_map = connection_manager.0.lock().unwrap();
+            assert!(conn_map.contains_key(&db_alias_1), "DB alias 1 should be loaded");
+             assert!(conn_map.contains_key(&db_alias_2), "DB alias 2 should be loaded");
+        }
+
+        let close_all_result = commands::close(
+            app_handle.state::<ConnectionManager>(),
+            None // Close all
+        );
+         assert!(close_all_result.is_ok(), "Close all failed: {:?}", close_all_result.err());
+        assert!(close_all_result.unwrap(), "Close all should return true");
+
+         { // Verify both closed
+             let connection_manager = app_handle.state::<ConnectionManager>();
+            let conn_map = connection_manager.0.lock().unwrap();
+            assert!(conn_map.is_empty(), "Connection map should be empty after close all");
+        }
+    }
+
     // More tests will be added here...
 }

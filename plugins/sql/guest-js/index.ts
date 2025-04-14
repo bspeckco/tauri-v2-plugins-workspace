@@ -18,6 +18,9 @@ export interface QueryResult {
   lastInsertId?: number
 }
 
+/** Transaction identifier. */
+export type TxId = string
+
 /**
  * **Database**
  *
@@ -59,6 +62,7 @@ export default class Database {
    * A static initializer which synchronously returns an instance of
    * the Database class while deferring the actual database connection
    * until the first invocation or selection on the database.
+   * NOTE: This is likely deprecated with the new connection handling.
    *
    * # Sqlite
    *
@@ -70,6 +74,9 @@ export default class Database {
    * ```
    */
   static get(path: string): Database {
+    // TODO: Revisit if this method is still valid/useful.
+    // With the new model, operations always open a connection (temp or TX).
+    // There isn't a persistent connection to "defer".
     return new Database(path)
   }
 
@@ -77,41 +84,44 @@ export default class Database {
    * **execute**
    *
    * Passes a SQL expression to the database for execution.
+   * Can be used for `INSERT`, `UPDATE`, `DELETE`, `CREATE`, etc.
+   * Optionally runs within a transaction identified by `txId`.
+   *
+   * @param query - The SQL query string.
+   * @param bindValues - Optional array of values to bind to placeholders in the query.
+   * @param txId - Optional transaction identifier. If provided, the query runs within that transaction.
+   * @returns A Promise resolving to the query result.
    *
    * @example
    * ```ts
-   * // for sqlite & postgres
-   * // INSERT example
+   * // Simple insert
    * const result = await db.execute(
-   *    "INSERT into todos (id, title, status) VALUES ($1, $2, $3)",
-   *    [ todos.id, todos.title, todos.status ]
-   * );
-   * // UPDATE example
-   * const result = await db.execute(
-   *    "UPDATE todos SET title = $1, completed = $2 WHERE id = $3",
-   *    [ todos.title, todos.status, todos.id ]
+   *    "INSERT into users (name) VALUES (?)",
+   *    [ 'Bob' ]
    * );
    *
-   * // for mysql
-   * // INSERT example
-   * const result = await db.execute(
-   *    "INSERT into todos (id, title, status) VALUES (?, ?, ?)",
-   *    [ todos.id, todos.title, todos.status ]
-   * );
-   * // UPDATE example
-   * const result = await db.execute(
-   *    "UPDATE todos SET title = ?, completed = ? WHERE id = ?",
-   *    [ todos.title, todos.status, todos.id ]
-   * );
+   * // Insert within a transaction
+   * const tx = await db.beginTransaction();
+   * try {
+   *   const result = await db.execute(
+   *     "INSERT into items (name, owner_id) VALUES (?, ?)",
+   *     [ 'Laptop', 1 ],
+   *     tx
+   *   );
+   *   await db.commitTransaction(tx);
+   * } catch (e) {
+   *   await db.rollbackTransaction(tx);
+   * }
    * ```
    */
-  async execute(query: string, bindValues?: unknown[]): Promise<QueryResult> {
+  async execute(query: string, bindValues?: unknown[], txId?: TxId): Promise<QueryResult> {
     const [rowsAffected, lastInsertId] = await invoke<[number, number]>(
       'plugin:sql|execute',
       {
         db: this.path,
         query,
-        values: bindValues ?? []
+        values: bindValues ?? [],
+        txId: txId ?? null // Pass txId or null
       }
     )
     return {
@@ -124,25 +134,35 @@ export default class Database {
    * **select**
    *
    * Passes in a SELECT query to the database for execution.
+   * Optionally runs within a transaction identified by `txId`.
+   *
+   * @param query - The SQL query string.
+   * @param bindValues - Optional array of values to bind to placeholders in the query.
+   * @param txId - Optional transaction identifier. If provided, the query runs within that transaction.
+   * @returns A Promise resolving to the selected rows.
    *
    * @example
    * ```ts
-   * // for sqlite & postgres
-   * const result = await db.select(
-   *    "SELECT * from todos WHERE id = $1", [ id ]
+   * const users = await db.select<Array<{ id: number; name: string }>>(
+   *    "SELECT id, name from users WHERE id = ?", [ 1 ]
    * );
    *
-   * // for mysql
-   * const result = await db.select(
-   *    "SELECT * from todos WHERE id = ?", [ id ]
+   * // Select within a transaction
+   * const tx = await db.beginTransaction();
+   * const items = await db.select<Array<{ name: string }>>(
+   *   "SELECT name FROM items WHERE owner_id = ?",
+   *   [ 1 ],
+   *   tx
    * );
+   * await db.rollbackTransaction(tx); // Or commit
    * ```
    */
-  async select<T>(query: string, bindValues?: unknown[]): Promise<T> {
+  async select<T>(query: string, bindValues?: unknown[], txId?: TxId): Promise<T> {
     const result = await invoke<T>('plugin:sql|select', {
       db: this.path,
       query,
-      values: bindValues ?? []
+      values: bindValues ?? [],
+      txId: txId ?? null // Pass txId or null
     })
 
     return result
@@ -151,18 +171,75 @@ export default class Database {
   /**
    * **close**
    *
-   * Closes the database connection pool.
+   * Removes the database alias association. This prevents new operations
+   * from being started with this alias until `load` is called again.
+   * Does not affect currently active transactions, which will continue until
+   * committed or rolled back.
    *
    * @example
    * ```ts
    * const success = await db.close()
    * ```
-   * @param db - Optionally state the name of a database if you are managing more than one. Otherwise, all database pools will be in scope.
+   * @param dbPath - The specific database path/alias to close. If omitted, attempts to close the alias associated with this `Database` instance.
    */
-  async close(db?: string): Promise<boolean> {
+  async close(dbPath?: string): Promise<boolean> {
     const success = await invoke<boolean>('plugin:sql|close', {
-      db
+      db: dbPath ?? this.path // Use provided path or instance path
     })
     return success
+  }
+
+  // --- Transaction Commands ---
+
+  /**
+   * **beginTransaction**
+   *
+   * Starts a new transaction and returns a unique transaction identifier.
+   * All subsequent `execute` or `select` calls using this identifier will run
+   * within the same transaction context.
+   *
+   * @returns A Promise resolving to the transaction identifier string.
+   *
+   * @example
+   * ```ts
+   * const txId = await db.beginTransaction();
+   * ```
+   */
+  async beginTransaction(): Promise<TxId> {
+    return await invoke<TxId>('plugin:sql|begin_transaction', {
+      dbAlias: this.path
+    })
+  }
+
+  /**
+   * **commitTransaction**
+   *
+   * Commits the transaction identified by `txId`.
+   *
+   * @param txId - The transaction identifier returned by `beginTransaction`.
+   *
+   * @example
+   * ```ts
+   * await db.commitTransaction(txId);
+   * ```
+   */
+  async commitTransaction(txId: TxId): Promise<void> {
+    await invoke<void>('plugin:sql|commit_transaction', { txId })
+  }
+
+  /**
+   * **rollbackTransaction**
+   *
+   * Rolls back the transaction identified by `txId`.
+   *
+   * @param txId - The transaction identifier returned by `beginTransaction`.
+   *
+   * @example
+   * ```ts
+   * await db.rollbackTransaction(txId);
+   * ```
+   */
+  async rollbackTransaction(txId: TxId): Promise<void> {
+    await invoke<void>('plugin:sql|rollback_transaction', { txId })
   }
 }
