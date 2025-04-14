@@ -16,6 +16,7 @@ mod error;
 // mod wrapper; // Removed
 
 use std::collections::HashMap;
+use std::path::PathBuf; // Added import
 use std::sync::{Arc, Mutex};
 use uuid::Uuid; // Added
 
@@ -75,21 +76,20 @@ pub(crate) enum LastInsertId {
 
 // --- New State Definitions ---
 
-// Removed DbInfo struct
-// #[derive(Clone, Debug)]
-// struct DbInfo {
-//     path: PathBuf,
-//     // Add flags like read_only later if needed
-// }
+// Reintroduce DbInfo
+#[derive(Clone, Debug)] // Removed Send + Sync from derive
+struct DbInfo {
+    path: PathBuf,
+}
 
 #[derive(Default, Clone)]
-// Changed ConnectionManager to hold Arc<Mutex<Connection>>
+// Revert ConnectionManager to hold DbInfo
 pub(crate) struct ConnectionManager(
-    pub Arc<Mutex<HashMap<String, Arc<Mutex<rusqlite::Connection>>>>>
+    pub Arc<Mutex<HashMap<String, DbInfo>>>
 );
 
 #[derive(Default, Clone)]
-pub(crate) struct TransactionManager(pub Arc<Mutex<HashMap<Uuid, Arc<Mutex<rusqlite::Connection>>>>>); // Make field 0 pub(crate)
+pub(crate) struct TransactionManager(pub Arc<Mutex<HashMap<Uuid, Arc<Mutex<rusqlite::Connection>>>>>);
 
 
 // --- Updated Builder ---
@@ -145,7 +145,7 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
-    use crate::{commands, ConnectionManager, TransactionManager, Builder as SqlBuilder, LastInsertId};
+    use crate::{commands, ConnectionManager, TransactionManager, Builder as SqlBuilder, LastInsertId, Error};
     use serde_json::{json, Value as JsonValue};
     use tauri::{
         test::{mock_builder, mock_context, MockRuntime, noop_assets},
@@ -234,14 +234,22 @@ mod tests {
         let (app_handle, _connection_manager, _transaction_manager) = setup_test_environment();
         let db_alias = "sqlite::memory:".to_string();
 
-        // Load DB (direct call)
+        // Load DB
         commands::load(
-            app_handle.clone(), 
-            app_handle.state::<ConnectionManager>(), 
-            db_alias.clone()
+            app_handle.clone(),
+            app_handle.state::<ConnectionManager>(),
+            db_alias.clone(),
         ).expect("Failed to load test DB");
 
-        // Create table (direct call)
+        // --- Perform all operations within a single transaction for consistency ---
+        let tx_id = commands::begin_transaction(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone()
+        ).expect("Begin transaction failed for test setup");
+        let tx_id_opt = Some(tx_id.clone());
+
+        // Create table within TX
         let create_table_sql = "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)".to_string();
         let create_result = commands::execute(
             app_handle.state::<ConnectionManager>(),
@@ -249,11 +257,11 @@ mod tests {
             db_alias.clone(),
             create_table_sql,
             vec![],
-            None,
+            tx_id_opt.clone(), // Use TX ID
         );
         assert!(create_result.is_ok(), "Create table failed: {:?}", create_result.err());
 
-        // Insert data (direct call)
+        // Insert data within TX
         let insert_sql = "INSERT INTO users (name) VALUES (?)".to_string();
         let insert_params = vec![JsonValue::String("Alice".to_string())];
         let insert_result = commands::execute(
@@ -262,7 +270,7 @@ mod tests {
             db_alias.clone(),
             insert_sql,
             insert_params,
-            None,
+            tx_id_opt.clone(), // Use TX ID
         );
         assert!(insert_result.is_ok(), "Insert failed: {:?}", insert_result.err());
         let (rows_affected, last_insert_id) = insert_result.unwrap();
@@ -273,7 +281,7 @@ mod tests {
             _ => panic!("Unexpected LastInsertId variant"),
         }
 
-        // Select data (direct call)
+        // Select data within TX
         let select_sql = "SELECT id, name FROM users WHERE name = ?".to_string();
         let select_params = vec![JsonValue::String("Alice".to_string())];
         let select_result = commands::select(
@@ -282,7 +290,7 @@ mod tests {
             db_alias.clone(),
             select_sql,
             select_params,
-            None,
+            tx_id_opt.clone(), // Use TX ID
         );
         assert!(select_result.is_ok(), "Select failed: {:?}", select_result.err());
 
@@ -295,7 +303,271 @@ mod tests {
         expected_row.insert("name".to_string(), json!("Alice"));
 
         assert_eq!(user_row, &expected_row);
+
+        // Commit the transaction (clean up)
+        commands::commit_transaction(
+            app_handle.state::<TransactionManager>(),
+            tx_id
+        ).expect("Commit failed for test cleanup");
     }
 
-    // ...
+    #[test]
+    fn test_transaction_commit() {
+        let (app_handle, _connection_manager, _) = setup_test_environment();
+        let temp_db_dir = tempdir().expect("Failed to create temp dir for commit test");
+        let db_path = temp_db_dir.path().join("test_tx_commit.sqlite");
+        let db_alias = format!("sqlite:{}", db_path.display());
+
+        // Load DB
+        commands::load(
+            app_handle.clone(),
+            app_handle.state::<ConnectionManager>(),
+            db_alias.clone(),
+        ).expect("Failed to load test DB");
+
+        // --- Create table in a separate, committed transaction ---
+        {
+            let setup_tx_id = commands::begin_transaction(
+                app_handle.state::<ConnectionManager>(),
+                app_handle.state::<TransactionManager>(),
+                db_alias.clone()
+            ).expect("Begin setup transaction failed");
+            let create_table_sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)".to_string();
+            commands::execute(
+                app_handle.state::<ConnectionManager>(),
+                app_handle.state::<TransactionManager>(),
+                db_alias.clone(), create_table_sql, vec![], Some(setup_tx_id.clone())
+            ).expect("Create table failed in setup transaction");
+            commands::commit_transaction(
+                app_handle.state::<TransactionManager>(),
+                setup_tx_id
+            ).expect("Commit setup transaction failed");
+        }
+        // --- Table creation complete ---
+
+        // Begin main test transaction
+        let tx_id = commands::begin_transaction(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone()
+        ).expect("Begin transaction failed");
+        let tx_id_opt = Some(tx_id.clone());
+        let tx_uuid = uuid::Uuid::parse_str(&tx_id).unwrap();
+
+        // Insert data within transaction
+        let insert_sql = "INSERT INTO items (id, name) VALUES (?, ?)".to_string();
+        let insert_params = vec![json!(1), json!("Item 1")];
+        let insert_result = commands::execute(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql, insert_params, tx_id_opt.clone()
+        );
+        assert!(insert_result.is_ok(), "Insert within TX failed: {:?}", insert_result.err());
+
+        // Select outside transaction (should not see item yet)
+        let select_sql = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params = vec![json!(1)];
+        let select_outside_result = commands::select(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql.clone(), select_params.clone(), None // No tx_id
+        );
+        assert!(select_outside_result.is_ok(), "Select outside TX failed: {:?}", select_outside_result.err());
+        assert!(select_outside_result.unwrap().is_empty(), "Item should not be visible outside TX before commit");
+
+        // Select inside transaction (should see item)
+        let select_inside_result = commands::select(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql.clone(), select_params.clone(), tx_id_opt.clone() // With tx_id
+        );
+        assert!(select_inside_result.is_ok(), "Select inside TX failed: {:?}", select_inside_result.err());
+        let data_inside = select_inside_result.unwrap();
+        assert_eq!(data_inside.len(), 1, "Item should be visible inside TX");
+        assert_eq!(data_inside[0].get("name").unwrap(), &json!("Item 1"));
+
+        // Commit transaction
+        let commit_result = commands::commit_transaction(
+            app_handle.state::<TransactionManager>(),
+            tx_id.clone()
+        );
+        assert!(commit_result.is_ok(), "Commit failed: {:?}", commit_result.err());
+
+        // Select outside transaction again (should see item now)
+        let select_after_commit_result = commands::select(
+            app_handle.state::<ConnectionManager>(),
+            app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql.clone(), select_params.clone(), None // No tx_id
+        );
+        assert!(select_after_commit_result.is_ok(), "Select after commit failed: {:?}", select_after_commit_result.err());
+        let data_after_commit = select_after_commit_result.unwrap();
+        assert_eq!(data_after_commit.len(), 1, "Item should be visible outside TX after commit");
+        assert_eq!(data_after_commit[0].get("name").unwrap(), &json!("Item 1"));
+
+        // Verify transaction ID is removed from manager (fetch state from app_handle)
+        {
+            let current_transaction_manager = app_handle.state::<TransactionManager>();
+            let tx_map = current_transaction_manager.0.lock().unwrap();
+            assert!(!tx_map.contains_key(&tx_uuid), "Transaction ID should be removed after commit");
+        }
+    }
+
+    #[test]
+    fn test_transaction_rollback() {
+        let (app_handle, _connection_manager, _) = setup_test_environment();
+        let temp_db_dir = tempdir().expect("Failed to create temp dir for rollback test");
+        let db_path = temp_db_dir.path().join("test_tx_rollback.sqlite");
+        let db_alias = format!("sqlite:{}", db_path.display());
+
+        // Load DB & Create table
+        commands::load(app_handle.clone(), app_handle.state::<ConnectionManager>(), db_alias.clone()).expect("Load failed");
+        // --- Create table in a separate, committed transaction ---
+        {
+            let setup_tx_id = commands::begin_transaction(
+                app_handle.state::<ConnectionManager>(),
+                app_handle.state::<TransactionManager>(),
+                db_alias.clone()
+            ).expect("Begin setup transaction failed");
+            let create_sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)".to_string();
+            commands::execute(app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), db_alias.clone(), create_sql, vec![], Some(setup_tx_id.clone())).expect("Create failed in setup transaction");
+            commands::commit_transaction(
+                app_handle.state::<TransactionManager>(),
+                setup_tx_id
+            ).expect("Commit setup transaction failed");
+        }
+        // --- Table creation complete ---
+
+        // Begin main test transaction
+        let tx_id = commands::begin_transaction(app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), db_alias.clone()).expect("Begin failed");
+        let tx_id_opt = Some(tx_id.clone());
+        let tx_uuid = uuid::Uuid::parse_str(&tx_id).unwrap();
+
+        // Insert data within transaction
+        let insert_sql = "INSERT INTO items (id, name) VALUES (?, ?)".to_string();
+        let insert_params = vec![json!(1), json!("Item R")];
+        let insert_result = commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), 
+            db_alias.clone(), insert_sql, insert_params, tx_id_opt.clone()
+        );
+        assert!(insert_result.is_ok());
+
+        // Select inside transaction (should see item)
+        let select_sql = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params = vec![json!(1)];
+        let select_inside_result = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), 
+            db_alias.clone(), select_sql.clone(), select_params.clone(), tx_id_opt
+        );
+        assert!(select_inside_result.is_ok());
+        assert_eq!(select_inside_result.unwrap().len(), 1, "Item should be visible inside TX before rollback");
+
+        // Rollback transaction
+        let rollback_result = commands::rollback_transaction(
+            app_handle.state::<TransactionManager>(),
+            tx_id.clone()
+        );
+        assert!(rollback_result.is_ok(), "Rollback failed: {:?}", rollback_result.err());
+
+        // Select outside transaction (should NOT see item)
+        let select_after_rollback_result = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), 
+            db_alias.clone(), select_sql.clone(), select_params.clone(), None // No tx_id
+        );
+        assert!(select_after_rollback_result.is_ok());
+        assert!(select_after_rollback_result.unwrap().is_empty(), "Item should NOT be visible outside TX after rollback");
+
+        // Verify transaction ID is removed from manager (fetch state from app_handle)
+        {
+            let current_transaction_manager = app_handle.state::<TransactionManager>();
+            let tx_map = current_transaction_manager.0.lock().unwrap();
+            assert!(!tx_map.contains_key(&tx_uuid), "Transaction ID should be removed after rollback");
+        }
+    }
+
+    #[test]
+    fn test_transaction_error_rollback() {
+        let (app_handle, _connection_manager, _) = setup_test_environment();
+        let temp_db_dir = tempdir().expect("Failed to create temp dir for error rollback test");
+        let db_path = temp_db_dir.path().join("test_tx_error_rollback.sqlite");
+        // Use absolute path for the alias
+        let db_alias = format!("sqlite:{}", db_path.display());
+
+        // Load DB & Create table (using app_handle.state)
+        commands::load(app_handle.clone(), app_handle.state::<ConnectionManager>(), db_alias.clone()).expect("Load failed");
+        {
+            let setup_tx_id = commands::begin_transaction(
+                app_handle.state::<ConnectionManager>(),
+                app_handle.state::<TransactionManager>(),
+                db_alias.clone()
+            ).expect("Begin setup transaction failed");
+            let create_sql = "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)".to_string();
+            commands::execute(app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), db_alias.clone(), create_sql, vec![], Some(setup_tx_id.clone())).expect("Create failed in setup transaction");
+            commands::commit_transaction(
+                app_handle.state::<TransactionManager>(),
+                setup_tx_id
+            ).expect("Commit setup transaction failed");
+        }
+
+        // Begin main test transaction (using app_handle.state)
+        let tx_id = commands::begin_transaction(app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), db_alias.clone()).expect("Begin failed");
+        let tx_id_opt = Some(tx_id.clone());
+        let tx_uuid = uuid::Uuid::parse_str(&tx_id).unwrap();
+
+        // 1. Insert valid data (using app_handle.state)
+        let insert_sql = "INSERT INTO items (id, name) VALUES (?, ?)".to_string();
+        let insert_params_1 = vec![json!(10), json!("Item E1")];
+        let insert_result_1 = commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql.clone(), insert_params_1, tx_id_opt.clone()
+        );
+        assert!(insert_result_1.is_ok(), "First insert in TX failed: {:?}", insert_result_1.err());
+
+        // 2. Attempt invalid insert (using app_handle.state)
+        let insert_params_2 = vec![json!(10), json!("Item E2")];
+        let insert_result_2 = commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql.clone(), insert_params_2, tx_id_opt.clone()
+        );
+        assert!(insert_result_2.is_err(), "Second (invalid) insert should fail");
+        match insert_result_2.err().unwrap() {
+            Error::Rusqlite(e) => match e {
+                rusqlite::Error::SqliteFailure(f, _) => assert_eq!(f.code, rusqlite::ErrorCode::ConstraintViolation),
+                _ => panic!("Expected SqliteFailure"),
+            },
+            _ => panic!("Expected Error::Rusqlite"),
+        }
+
+        // 3. Verify transaction ID still exists in manager (fetch state from app_handle)
+        {
+            let current_transaction_manager = app_handle.state::<TransactionManager>();
+            let tx_map_before_rollback = current_transaction_manager.0.lock().unwrap();
+            assert!(tx_map_before_rollback.contains_key(&tx_uuid), "Transaction ID should still exist after op error");
+        } // Release lock immediately
+
+        // 4. Rollback transaction (using app_handle.state)
+        let rollback_result = commands::rollback_transaction(
+            app_handle.state::<TransactionManager>(),
+            tx_id.clone()
+        );
+        assert!(rollback_result.is_ok(), "Rollback failed: {:?}", rollback_result.err());
+
+        // 5. Select outside transaction (using app_handle.state)
+        let select_sql = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params = vec![json!(10)];
+        let select_after_rollback_result = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql.clone(), select_params.clone(), None
+        );
+        assert!(select_after_rollback_result.is_ok());
+        assert!(select_after_rollback_result.unwrap().is_empty(), "Item from first insert should NOT be visible after rollback");
+
+        // 6. Verify transaction ID is removed from manager (fetch state from app_handle)
+        {
+            let current_transaction_manager = app_handle.state::<TransactionManager>();
+            let tx_map_after_rollback = current_transaction_manager.0.lock().unwrap();
+            assert!(!tx_map_after_rollback.contains_key(&tx_uuid), "Transaction ID should be removed after rollback");
+        }
+    }
+
+    // More tests will be added here...
 }
