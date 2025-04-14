@@ -7,15 +7,25 @@ use serde::{Serialize, Serializer};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Sql(#[from] sqlx::Error),
-    #[error(transparent)]
-    Migration(#[from] sqlx::migrate::MigrateError),
-    #[error("invalid connection url: {0}")]
-    InvalidDbUrl(String),
-    #[error("database {0} not loaded")]
+    Rusqlite(#[from] rusqlite::Error),
+    #[error("invalid database url format: {0}")]
+    InvalidDatabaseUrl(String),
+    #[error("database alias \"{0}\" not loaded. Make sure you have called `load` for this alias.")]
     DatabaseNotLoaded(String),
-    #[error("unsupported datatype: {0}")]
-    UnsupportedDatatype(String),
+    #[error("database type \"{0}\" is not supported. Only 'sqlite' is supported.")]
+    UnsupportedDatabaseType(String),
+    #[error("failed to resolve application path")]
+    CannotResolvePath,
+    #[error("transaction with id \"{0}\" not found. It may have already been committed or rolled back.")]
+    TransactionNotFound(String),
+    #[error("invalid transaction id format: {0}")]
+    InvalidUuid(String),
+    #[error("failed to connect to database: {0} ({1})")]
+    ConnectionFailed(String, String),
+    #[error("error converting value: {0}")]
+    ValueConversionError(String),
+    #[error("IO error: {0}")]
+    Io(String),
 }
 
 impl Serialize for Error {

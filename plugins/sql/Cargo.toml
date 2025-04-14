@@ -30,14 +30,23 @@ serde_json = { workspace = true }
 tauri = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
-futures-core = "0.3"
-sqlx = { version = "0.8", features = ["json", "time"] }
-time = "0.3"
-tokio = { version = "1", features = ["sync"] }
+# futures-core = "0.3"
+# sqlx = { version = "0.8", features = ["json", "time"] }
+# time = "0.3"
+# tokio = { version = "1", features = ["sync"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 indexmap = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
 
 [features]
-sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio"]
-mysql = ["sqlx/mysql", "sqlx/runtime-tokio-rustls"]
-postgres = ["sqlx/postgres", "sqlx/runtime-tokio-rustls"]
+default = ["sqlite"]
+# sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio"]
+sqlite = []
+# mysql = ["sqlx/mysql", "sqlx/runtime-tokio-rustls"]
+# postgres = ["sqlx/postgres", "sqlx/runtime-tokio-rustls"]
 # TODO: bundled-cipher etc
+
+[dev-dependencies]
+tauri = { workspace = true, features = ["test"] }
+tempfile = "3.10" # Added for file DB tests
