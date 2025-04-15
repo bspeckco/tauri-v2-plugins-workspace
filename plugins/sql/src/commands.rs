@@ -18,6 +18,7 @@ use uuid::Uuid;
 use std::sync::{Arc, Mutex}; // Added missing import
 use rusqlite::{Connection}; // Removed params_from_iter, Statement
 use log;
+use std::time::Duration;
 
 // Refactored load command
 #[command]
@@ -113,12 +114,15 @@ pub(crate) fn begin_transaction(
         .lock()
         .unwrap()
         .get(&db_alias)
-        .cloned() // Clone DbInfo
+        .cloned()
         .ok_or_else(|| Error::DatabaseNotLoaded(db_alias.clone()))?;
 
     // Open a *new* connection specifically for this transaction
-    let tx_conn = Connection::open(&db_info.path)
+    let mut tx_conn = Connection::open(&db_info.path)
         .map_err(|e| Error::ConnectionFailed(db_info.path.display().to_string(), e.to_string()))?;
+
+    // Set busy timeout for this transaction's connection
+    tx_conn.busy_timeout(Duration::from_millis(5000)).map_err(Error::Rusqlite)?;
 
     // Begin the transaction on the new connection
     tx_conn
