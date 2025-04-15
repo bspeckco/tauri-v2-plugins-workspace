@@ -14,6 +14,6 @@ const COMMANDS: &[&str] = &[
 
 fn main() {
     tauri_plugin::Builder::new(COMMANDS)
-        .global_api_script_path("./api-iife.js")
+        // .global_api_script_path("./api-iife.js") // REMOVED - Build fails without it, and it isn't auto-generated correctly
         .build();
 }
