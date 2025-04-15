@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the begin_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-begin-transaction",
+          "markdownDescription": "Enables the begin_transaction command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the begin_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-begin-transaction",
+          "markdownDescription": "Denies the begin_transaction command without any pre-configured scope."
+        },
+        {
           "description": "Enables the close command without any pre-configured scope.",
           "type": "string",
           "const": "allow-close",
@@ -305,6 +317,18 @@
           "type": "string",
           "const": "deny-close",
           "markdownDescription": "Denies the close command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the commit_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-commit-transaction",
+          "markdownDescription": "Enables the commit_transaction command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the commit_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-commit-transaction",
+          "markdownDescription": "Denies the commit_transaction command without any pre-configured scope."
         },
         {
           "description": "Enables the execute command without any pre-configured scope.",
@@ -331,6 +355,18 @@
           "markdownDescription": "Denies the load command without any pre-configured scope."
         },
         {
+          "description": "Enables the rollback_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-rollback-transaction",
+          "markdownDescription": "Enables the rollback_transaction command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rollback_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-rollback-transaction",
+          "markdownDescription": "Denies the rollback_transaction command without any pre-configured scope."
+        },
+        {
           "description": "Enables the select command without any pre-configured scope.",
           "type": "string",
           "const": "allow-select",
@@ -341,12 +377,6 @@
           "type": "string",
           "const": "deny-select",
           "markdownDescription": "Denies the select command without any pre-configured scope."
-        },
-        {
-          "description": "### Default Permissions\n\nThis permission set configures what kind of\ndatabase operations are available from the sql plugin.\n\n### Granted Permissions\n\nAll reading related operations are enabled.\nAlso allows to load or close a connection.\n\n\n#### This default permission set includes:\n\n- `allow-close`\n- `allow-load`\n- `allow-select`",
-          "type": "string",
-          "const": "default",
-          "markdownDescription": "### Default Permissions\n\nThis permission set configures what kind of\ndatabase operations are available from the sql plugin.\n\n### Granted Permissions\n\nAll reading related operations are enabled.\nAlso allows to load or close a connection.\n\n\n#### This default permission set includes:\n\n- `allow-close`\n- `allow-load`\n- `allow-select`"
         }
       ]
     }

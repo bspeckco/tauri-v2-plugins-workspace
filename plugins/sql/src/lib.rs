@@ -343,9 +343,8 @@ mod tests {
                 setup_tx_id
             ).expect("Commit setup transaction failed");
         }
-        // --- Table creation complete ---
 
-        // Begin main test transaction
+        // --- Main Test Transaction --- 
         let tx_id = commands::begin_transaction(
             app_handle.state::<ConnectionManager>(),
             app_handle.state::<TransactionManager>(),
@@ -354,57 +353,90 @@ mod tests {
         let tx_id_opt = Some(tx_id.clone());
         let tx_uuid = uuid::Uuid::parse_str(&tx_id).unwrap();
 
-        // Insert data within transaction
+        // 1. Insert item 1 within transaction
         let insert_sql = "INSERT INTO items (id, name) VALUES (?, ?)".to_string();
-        let insert_params = vec![json!(1), json!("Item 1")];
-        let insert_result = commands::execute(
-            app_handle.state::<ConnectionManager>(),
-            app_handle.state::<TransactionManager>(),
-            db_alias.clone(), insert_sql, insert_params, tx_id_opt.clone()
-        );
-        assert!(insert_result.is_ok(), "Insert within TX failed: {:?}", insert_result.err());
+        let insert_params_1 = vec![json!(1), json!("Item 1 Initial")];
+        commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql.clone(), insert_params_1, tx_id_opt.clone()
+        ).expect("Insert 1 within TX failed");
 
-        // Select outside transaction (should not see item yet)
-        let select_sql = "SELECT name FROM items WHERE id = ?".to_string();
-        let select_params = vec![json!(1)];
-        let select_outside_result = commands::select(
-            app_handle.state::<ConnectionManager>(),
-            app_handle.state::<TransactionManager>(),
-            db_alias.clone(), select_sql.clone(), select_params.clone(), None // No tx_id
-        );
-        assert!(select_outside_result.is_ok(), "Select outside TX failed: {:?}", select_outside_result.err());
-        assert!(select_outside_result.unwrap().is_empty(), "Item should not be visible outside TX before commit");
+        // 2. Insert item 2 within transaction
+        let insert_params_2 = vec![json!(2), json!("Item 2")];
+        commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql.clone(), insert_params_2, tx_id_opt.clone()
+        ).expect("Insert 2 within TX failed");
 
-        // Select inside transaction (should see item)
-        let select_inside_result = commands::select(
-            app_handle.state::<ConnectionManager>(),
-            app_handle.state::<TransactionManager>(),
-            db_alias.clone(), select_sql.clone(), select_params.clone(), tx_id_opt.clone() // With tx_id
-        );
-        assert!(select_inside_result.is_ok(), "Select inside TX failed: {:?}", select_inside_result.err());
-        let data_inside = select_inside_result.unwrap();
-        assert_eq!(data_inside.len(), 1, "Item should be visible inside TX");
-        assert_eq!(data_inside[0].get("name").unwrap(), &json!("Item 1"));
+        // 3. Update item 1 within transaction
+        let update_sql = "UPDATE items SET name = ? WHERE id = ?".to_string();
+        let update_params_1 = vec![json!("Item 1 Updated"), json!(1)];
+         commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), update_sql.clone(), update_params_1, tx_id_opt.clone()
+        ).expect("Update 1 within TX failed");
 
-        // Commit transaction
-        let commit_result = commands::commit_transaction(
+        // 4. Select item 1 inside transaction (verify update)
+        let select_sql_1 = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params_1 = vec![json!(1)];
+        let select_inside_1 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_1.clone(), select_params_1.clone(), tx_id_opt.clone()
+        ).expect("Select 1 inside TX failed");
+        assert_eq!(select_inside_1.len(), 1, "Item 1 should be visible inside TX");
+        assert_eq!(select_inside_1[0].get("name").unwrap(), &json!("Item 1 Updated"));
+
+         // 5. Select item 2 inside transaction (verify insert)
+        let select_sql_2 = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params_2 = vec![json!(2)];
+        let select_inside_2 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_2.clone(), select_params_2.clone(), tx_id_opt.clone()
+        ).expect("Select 2 inside TX failed");
+        assert_eq!(select_inside_2.len(), 1, "Item 2 should be visible inside TX");
+        assert_eq!(select_inside_2[0].get("name").unwrap(), &json!("Item 2"));
+
+        // 6. Select non-existent item inside transaction
+        let select_params_3 = vec![json!(3)];
+        let select_inside_3 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_1.clone(), select_params_3.clone(), tx_id_opt.clone()
+        ).expect("Select 3 inside TX failed");
+        assert!(select_inside_3.is_empty(), "Item 3 should not exist inside TX");
+
+        // 7. Select item 1 outside transaction (should not see updated item yet)
+        let select_outside_1 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_1.clone(), select_params_1.clone(), None // No tx_id
+        );
+        assert!(select_outside_1.is_ok(), "Select 1 outside TX failed: {:?}", select_outside_1.err());
+        assert!(select_outside_1.unwrap().is_empty(), "Item 1 should not be visible outside TX before commit");
+
+        // 8. Commit transaction
+        commands::commit_transaction(
             app_handle.state::<TransactionManager>(),
             tx_id.clone()
-        );
-        assert!(commit_result.is_ok(), "Commit failed: {:?}", commit_result.err());
+        ).expect("Commit failed");
 
-        // Select outside transaction again (should see item now)
-        let select_after_commit_result = commands::select(
-            app_handle.state::<ConnectionManager>(),
-            app_handle.state::<TransactionManager>(),
-            db_alias.clone(), select_sql.clone(), select_params.clone(), None // No tx_id
+        // 9. Select item 1 outside transaction again (should see updated item now)
+        let select_after_commit_1 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_1.clone(), select_params_1.clone(), None // No tx_id
         );
-        assert!(select_after_commit_result.is_ok(), "Select after commit failed: {:?}", select_after_commit_result.err());
-        let data_after_commit = select_after_commit_result.unwrap();
-        assert_eq!(data_after_commit.len(), 1, "Item should be visible outside TX after commit");
-        assert_eq!(data_after_commit[0].get("name").unwrap(), &json!("Item 1"));
+        let data_after_commit_1 = select_after_commit_1.expect("Select 1 after commit failed");
+        assert_eq!(data_after_commit_1.len(), 1, "Item 1 should be visible outside TX after commit");
+        assert_eq!(data_after_commit_1[0].get("name").unwrap(), &json!("Item 1 Updated"));
 
-        // Verify transaction ID is removed from manager (fetch state from app_handle)
+        // 10. Select item 2 outside transaction again (should see inserted item now)
+        let select_after_commit_2 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_2.clone(), select_params_2.clone(), None // No tx_id
+        );
+        let data_after_commit_2 = select_after_commit_2.expect("Select 2 after commit failed");
+        assert_eq!(data_after_commit_2.len(), 1, "Item 2 should be visible outside TX after commit");
+        assert_eq!(data_after_commit_2[0].get("name").unwrap(), &json!("Item 2"));
+
+        // Verify transaction ID is removed from manager
         {
             let current_transaction_manager = app_handle.state::<TransactionManager>();
             let tx_map = current_transaction_manager.0.lock().unwrap();
@@ -421,7 +453,6 @@ mod tests {
 
         // Load DB & Create table
         commands::load(app_handle.clone(), app_handle.state::<ConnectionManager>(), db_alias.clone()).expect("Load failed");
-        // --- Create table in a separate, committed transaction ---
         {
             let setup_tx_id = commands::begin_transaction(
                 app_handle.state::<ConnectionManager>(),
@@ -435,48 +466,70 @@ mod tests {
                 setup_tx_id
             ).expect("Commit setup transaction failed");
         }
-        // --- Table creation complete ---
 
-        // Begin main test transaction
+        // --- Main Test Transaction --- 
         let tx_id = commands::begin_transaction(app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), db_alias.clone()).expect("Begin failed");
         let tx_id_opt = Some(tx_id.clone());
         let tx_uuid = uuid::Uuid::parse_str(&tx_id).unwrap();
 
-        // Insert data within transaction
+        // Insert item 1 within transaction
         let insert_sql = "INSERT INTO items (id, name) VALUES (?, ?)".to_string();
-        let insert_params = vec![json!(1), json!("Item R")];
-        let insert_result = commands::execute(
-            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), 
-            db_alias.clone(), insert_sql, insert_params, tx_id_opt.clone()
-        );
-        assert!(insert_result.is_ok());
+        let insert_params_1 = vec![json!(1), json!("Item R1")];
+        commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql.clone(), insert_params_1, tx_id_opt.clone()
+        ).expect("Insert R1 within TX failed");
 
-        // Select inside transaction (should see item)
-        let select_sql = "SELECT name FROM items WHERE id = ?".to_string();
-        let select_params = vec![json!(1)];
-        let select_inside_result = commands::select(
-            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), 
-            db_alias.clone(), select_sql.clone(), select_params.clone(), tx_id_opt
+        // Insert item 2 within transaction
+        let insert_params_2 = vec![json!(2), json!("Item R2")];
+        commands::execute(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), insert_sql.clone(), insert_params_2, tx_id_opt.clone()
+        ).expect("Insert R2 within TX failed");
+
+        // Select item 1 inside transaction (should see item)
+        let select_sql_1 = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params_1 = vec![json!(1)];
+        let select_inside_1 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_1.clone(), select_params_1.clone(), tx_id_opt.clone()
         );
-        assert!(select_inside_result.is_ok());
-        assert_eq!(select_inside_result.unwrap().len(), 1, "Item should be visible inside TX before rollback");
+        assert!(select_inside_1.is_ok(), "Select R1 inside TX failed: {:?}", select_inside_1.err());
+        assert_eq!(select_inside_1.unwrap().len(), 1, "Item R1 should be visible inside TX before rollback");
+
+        // Select item 2 inside transaction (should see item)
+         let select_sql_2 = "SELECT name FROM items WHERE id = ?".to_string();
+        let select_params_2 = vec![json!(2)];
+        let select_inside_2 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_2.clone(), select_params_2.clone(), tx_id_opt.clone()
+        );
+        assert!(select_inside_2.is_ok(), "Select R2 inside TX failed: {:?}", select_inside_2.err());
+        assert_eq!(select_inside_2.unwrap().len(), 1, "Item R2 should be visible inside TX before rollback");
 
         // Rollback transaction
-        let rollback_result = commands::rollback_transaction(
+        commands::rollback_transaction(
             app_handle.state::<TransactionManager>(),
             tx_id.clone()
-        );
-        assert!(rollback_result.is_ok(), "Rollback failed: {:?}", rollback_result.err());
+        ).expect("Rollback failed");
 
-        // Select outside transaction (should NOT see item)
-        let select_after_rollback_result = commands::select(
-            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(), 
-            db_alias.clone(), select_sql.clone(), select_params.clone(), None // No tx_id
+        // Select item 1 outside transaction (should NOT see item)
+        let select_after_rollback_1 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_1.clone(), select_params_1.clone(), None // No tx_id
         );
-        assert!(select_after_rollback_result.is_ok());
-        assert!(select_after_rollback_result.unwrap().is_empty(), "Item should NOT be visible outside TX after rollback");
+        assert!(select_after_rollback_1.is_ok(), "Select R1 after rollback failed: {:?}", select_after_rollback_1.err());
+        assert!(select_after_rollback_1.unwrap().is_empty(), "Item R1 should NOT be visible outside TX after rollback");
 
-        // Verify transaction ID is removed from manager (fetch state from app_handle)
+        // Select item 2 outside transaction (should NOT see item)
+        let select_after_rollback_2 = commands::select(
+            app_handle.state::<ConnectionManager>(), app_handle.state::<TransactionManager>(),
+            db_alias.clone(), select_sql_2.clone(), select_params_2.clone(), None // No tx_id
+        );
+        assert!(select_after_rollback_2.is_ok(), "Select R2 after rollback failed: {:?}", select_after_rollback_2.err());
+        assert!(select_after_rollback_2.unwrap().is_empty(), "Item R2 should NOT be visible outside TX after rollback");
+
+        // Verify transaction ID is removed from manager
         {
             let current_transaction_manager = app_handle.state::<TransactionManager>();
             let tx_map = current_transaction_manager.0.lock().unwrap();

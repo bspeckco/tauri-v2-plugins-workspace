@@ -1,22 +1,3 @@
-## Default Permission
-
-### Default Permissions
-
-This permission set configures what kind of
-database operations are available from the sql plugin.
-
-### Granted Permissions
-
-All reading related operations are enabled.
-Also allows to load or close a connection.
-
-
-
-#### This default permission set includes the following:
-
-- `allow-close`
-- `allow-load`
-- `allow-select`
 
 ## Permission Table
 
@@ -26,6 +7,32 @@ Also allows to load or close a connection.
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`sql:allow-begin-transaction`
+
+</td>
+<td>
+
+Enables the begin_transaction command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`sql:deny-begin-transaction`
+
+</td>
+<td>
+
+Denies the begin_transaction command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -49,6 +56,32 @@ Enables the close command without any pre-configured scope.
 <td>
 
 Denies the close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`sql:allow-commit-transaction`
+
+</td>
+<td>
+
+Enables the commit_transaction command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`sql:deny-commit-transaction`
+
+</td>
+<td>
+
+Denies the commit_transaction command without any pre-configured scope.
 
 </td>
 </tr>
@@ -101,6 +134,32 @@ Enables the load command without any pre-configured scope.
 <td>
 
 Denies the load command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`sql:allow-rollback-transaction`
+
+</td>
+<td>
+
+Enables the rollback_transaction command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`sql:deny-rollback-transaction`
+
+</td>
+<td>
+
+Denies the rollback_transaction command without any pre-configured scope.
 
 </td>
 </tr>
