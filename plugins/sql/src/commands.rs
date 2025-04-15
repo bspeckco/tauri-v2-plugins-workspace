@@ -125,8 +125,9 @@ pub(crate) fn begin_transaction(
     tx_conn.busy_timeout(Duration::from_millis(5000)).map_err(Error::Rusqlite)?;
 
     // Begin the transaction on the new connection
+    // Use EXCLUSIVE for diagnostics - prevents *all* other connections during TX
     tx_conn
-        .execute_batch("BEGIN IMMEDIATE")
+        .execute_batch("BEGIN EXCLUSIVE") 
         .map_err(Error::Rusqlite)?;
 
     // Generate ID and store the new connection (wrapped in Arc<Mutex<_>>) in TransactionManager
