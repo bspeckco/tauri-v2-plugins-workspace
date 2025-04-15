@@ -22,10 +22,10 @@ Install the Core plugin by adding the following to your `Cargo.toml` file:
 
 ```toml
 [dependencies.tauri-plugin-sql]
-# Point this to your fork's repository and branch/tag/commit
+# Point this to your fork's repository and branch/tag/rev
 # Example using a GitHub repo:
 git = "https://github.com/bspeckco/tauri-v2-plugins-workspace"
-branch = "main" rev = "COMMIT_HASH"
+branch = "v2"
 # Or use a local path if developing locally:
 # path = "../path/to/your/fork/tauri-plugin-sql"
 ```

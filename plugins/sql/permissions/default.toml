@@ -1,16 +1,17 @@
-"$schema" = "schemas/schema.json"
+# Default permissions for the plugin.
+# This is the set of permissions automatically enabled by the plugin
+# or when explicitly adding the `plugin:sql:default` permission
 
-[default]
-description = """
-### Default Permissions
+"$schema" = "./schemas/permission-set.schema.json"
 
-This permission set configures what kind of
-database operations are available from the sql plugin.
-
-### Granted Permissions
-
-All reading related operations are enabled.
-Also allows to load or close a connection.
-
-"""
-permissions = ["allow-close", "allow-load", "allow-select"]
+identifier = "default"
+description = "Default permissions for the SQL plugin."
+permissions = [
+  "allow-load",
+  "allow-execute",
+  "allow-select",
+  "allow-close",
+  "allow-begin-transaction",
+  "allow-commit-transaction",
+  "allow-rollback-transaction"
+]

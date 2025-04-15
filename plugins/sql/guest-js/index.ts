@@ -118,10 +118,10 @@ export default class Database {
     const [rowsAffected, lastInsertId] = await invoke<[number, number]>(
       'plugin:sql|execute',
       {
-        db: this.path,
+        dbAlias: this.path,
         query,
         values: bindValues ?? [],
-        txId: txId ?? null // Pass txId or null
+        txId: txId ?? null
       }
     )
     return {
@@ -159,10 +159,10 @@ export default class Database {
    */
   async select<T>(query: string, bindValues?: unknown[], txId?: TxId): Promise<T> {
     const result = await invoke<T>('plugin:sql|select', {
-      db: this.path,
+      dbAlias: this.path,
       query,
       values: bindValues ?? [],
-      txId: txId ?? null // Pass txId or null
+      txId: txId ?? null
     })
 
     return result
