@@ -1,6 +1,7 @@
 # dependency directories
 node_modules/
 target/
+.idea/
 
 # Optional npm and yarn cache directory
 .npm/
@@ -58,3 +59,9 @@ pids
 .idea
 debug.log
 TODO.md
+
+# Ignore guest-js build artifacts and dependencies for all plugins
+/plugins/*/guest-js/node_modules
+/plugins/*/guest-js/dist
+# Allow package-lock.json for publishable guest-js packages
+# /plugins/*/guest-js/package-lock.json 
