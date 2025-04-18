@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use uuid::Uuid;
 use std::sync::{Arc, Mutex}; // Added missing import
-use rusqlite::{Connection}; // Removed params_from_iter, Statement
+use rusqlite::Connection; // Removed params_from_iter, Statement
 use log;
 use std::time::Duration;
 
@@ -125,9 +125,9 @@ pub(crate) fn begin_transaction(
     tx_conn.busy_timeout(Duration::from_millis(5000)).map_err(Error::Rusqlite)?;
 
     // Begin the transaction on the new connection
-    // Use EXCLUSIVE for diagnostics - prevents *all* other connections during TX
+    // Use IMMEDIATE (default behavior, allows concurrent reads until first write)
     tx_conn
-        .execute_batch("BEGIN EXCLUSIVE") 
+        .execute_batch("BEGIN IMMEDIATE")
         .map_err(Error::Rusqlite)?;
 
     // Generate ID and store the new connection (wrapped in Arc<Mutex<_>>) in TransactionManager
