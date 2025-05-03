@@ -38,10 +38,10 @@ func makeNotificationContent(_ notification: Notification) throws -> UNNotificat
       arguments: nil)
   }
 
-  content.userInfo = [
-    "__EXTRA__": notification.extra as Any,
-    "__SCHEDULE__": notification.schedule as Any,
-  ]
+  // content.userInfo = [
+  //   "__EXTRA__": notification.extra as Any,
+  //   "__SCHEDULE__": notification.schedule as Any,
+  // ]
 
   if let actionTypeId = notification.actionTypeId {
     content.categoryIdentifier = actionTypeId
